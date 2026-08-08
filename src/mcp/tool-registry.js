@@ -166,19 +166,37 @@ const TOOL_METADATA = {
   mb_card_get: {
     title: 'Get Card', outputSchema: {
       type: 'object',
+      additionalProperties: true,
       properties: {
         id: { type: 'number' }, name: { type: 'string' },
-        description: { type: 'string' }, display: { type: 'string' },
-        database_id: { type: 'number' }, collection_id: { type: 'number' },
+        description: { type: ['string', 'null'] }, display: { type: 'string' },
+        database_id: { type: 'number' }, collection_id: { type: ['number', 'null'] },
         archived: { type: 'boolean' },
-        created_at: { type: 'string' }, updated_at: { type: 'string' }
+        created_at: { type: 'string' }, updated_at: { type: 'string' },
+        dataset_query: { type: ['object', 'null'] }
       }, required: ['id', 'name', 'display']
     }
   },
   mb_card_update: { title: 'Update Card', write: true, destructive: false, idempotent: true },
   mb_card_delete: { title: 'Delete Card', write: true, destructive: true, idempotent: true },
   mb_card_archive: { title: 'Archive Card', write: true, destructive: false, idempotent: true },
-  mb_card_data: { title: 'Get Card Data' },
+  mb_card_data: {
+    title: 'Get Card Data',
+    outputSchema: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        card_id: { type: 'number' },
+        columns: { type: 'array', items: { type: 'string' } },
+        rows: { type: 'array', items: { type: 'array' } },
+        row_count: { type: 'number' },
+        returned_row_count: { type: 'number' },
+        max_rows: { type: 'number' },
+        truncated: { type: 'boolean' }
+      },
+      required: ['card_id', 'columns', 'rows', 'row_count', 'returned_row_count', 'max_rows', 'truncated']
+    }
+  },
   mb_card_copy: { title: 'Copy Card', write: true, destructive: false, idempotent: false },
   mb_card_clone: { title: 'Clone Card', write: true, destructive: false, idempotent: false },
 
@@ -2920,7 +2938,7 @@ export function getToolDefinitions() {
     // ==================== CARD/QUESTION CRUD ====================
     {
       name: 'mb_card_get',
-      description: 'Get detailed information about a specific card/question',
+      description: 'Get detailed information about a specific card/question. Text response includes dataset_query summary, Mongo collection, template-tags, and full native query (Cursor may not expose structuredContent).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2934,7 +2952,7 @@ export function getToolDefinitions() {
     },
     {
       name: 'mb_card_update',
-      description: 'Update an existing card/question',
+      description: 'Update an existing card/question. Supports dataset_query (full object) or native_query (+ optional mongo_collection / template_tags). When METABASE_WRITABLE_COLLECTION_IDS is set, only cards in those collections can be mutated.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2955,7 +2973,29 @@ export function getToolDefinitions() {
           },
           collection_id: {
             type: 'number',
-            description: 'Move to collection ID'
+            description: 'Move to collection ID (must be allowlisted when METABASE_WRITABLE_COLLECTION_IDS is set)'
+          },
+          dataset_query: {
+            description: 'Full Metabase dataset_query object (or JSON string). Replaces the card query.',
+            oneOf: [
+              { type: 'object' },
+              { type: 'string' }
+            ]
+          },
+          native_query: {
+            type: 'string',
+            description: 'Convenience: set native query text (SQL or Mongo aggregation JSON string). Merges into existing native dataset_query.'
+          },
+          mongo_collection: {
+            type: 'string',
+            description: 'Mongo collection name for native Mongo questions (with native_query)'
+          },
+          template_tags: {
+            description: 'Native template-tags object (or JSON string), used with native_query',
+            oneOf: [
+              { type: 'object' },
+              { type: 'string' }
+            ]
           }
         },
         required: ['card_id']
@@ -2991,7 +3031,7 @@ export function getToolDefinitions() {
     },
     {
       name: 'mb_card_data',
-      description: 'Execute a card/question and get the results in specified format',
+      description: 'Execute a card/question and get the results in specified format. For JSON, returns all rows up to max_rows (default 150); larger results set truncated=true. API errors include HTTP status and Metabase response body.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -3008,6 +3048,11 @@ export function getToolDefinitions() {
           parameters: {
             type: 'object',
             description: 'Optional parameters for parametric questions'
+          },
+          max_rows: {
+            type: 'number',
+            default: 150,
+            description: 'Maximum rows to return for JSON format (default 150). If the card has more rows, response is truncated with truncated=true and full row_count.'
           }
         },
         required: ['card_id']
